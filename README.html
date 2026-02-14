@@ -182,5 +182,15 @@ and a full breakdown of every signal that contributed to the score.</p>
   <li><strong>Not production-ready.</strong> No rate limiting, no monitoring, no automated tests, no CI/CD. Auth is a shared secret, not IAM/OAuth.</li>
 </ul>
 
+<hr>
+
+<h2>Future Ideas</h2>
+
+<ul>
+  <li><strong>ML model alongside heuristics</strong> — Train a classifier on scan history data to catch patterns that static rules miss. Keep heuristics for explainability, add ML for a confidence score.</li>
+  <li><strong>Shared database and cross-user learning</strong> — Replace Google Sheets with a real database. Aggregate scan data across users so a domain flagged by many users becomes a signal for everyone.</li>
+  <li><strong>"Mark as Safe" feedback loop</strong> — Let users correct false positives. The system learns from this feedback and adjusts scoring over time, making it self-correcting.</li>
+</ul>
+
 </body>
 </html>
