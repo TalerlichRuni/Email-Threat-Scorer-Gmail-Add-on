@@ -29,8 +29,8 @@ WEIGHTS = {
 }
 
 VERDICT_THRESHOLDS = [
-    (30,  "Safe"),
-    (60,  "Suspicious"),
+    (20,  "Safe"),
+    (50,  "Suspicious"),
     (100, "Malicious"),
 ]
 
@@ -84,10 +84,46 @@ def compute_score(results, blacklisted=False, blacklist_match=None, trust=None,
     trust_reason = trust.get("reason", "") if trust else ""
     dampen_factor = TRUST_DAMPENING.get(trust_level, 1.0)
 
+    # ── Dynamic weight redistribution ──
+    # If a category has no data to analyze (no links, no attachments, empty body),
+    # its weight is 0 and the freed points go to active categories — mainly content.
+    NO_DATA_MARKERS = {"no links", "no attachments", "empty email"}
+    empty_categories = set()
+    for cat_name in ("links", "attachments", "content"):
+        result = results.get(cat_name, {})
+        signals = result.get("signals", [])
+        if result.get("score", 0) == 0 and all(s.get("severity") == "info" for s in signals):
+            for s in signals:
+                if any(marker in s.get("description", "").lower() for marker in NO_DATA_MARKERS):
+                    empty_categories.add(cat_name)
+                    break
+
+    effective_weights = dict(WEIGHTS)
+    if empty_categories:
+        freed = sum(WEIGHTS[c] for c in empty_categories)
+        for c in empty_categories:
+            effective_weights[c] = 0
+
+        active = [c for c in WEIGHTS if c not in empty_categories]
+        if active:
+            # 60% of freed weight goes to content (if active), rest split proportionally
+            content_bonus = 0
+            if "content" in active:
+                content_bonus = round(freed * 0.6)
+                effective_weights["content"] += content_bonus
+
+            remaining = freed - content_bonus
+            other_active = [c for c in active if c != "content"]
+            if other_active:
+                per_cat = round(remaining / len(other_active))
+                for c in other_active:
+                    effective_weights[c] += per_cat
+
     breakdown = []
     total = 0.0
 
-    for category, weight in WEIGHTS.items():
+    for category, base_weight in WEIGHTS.items():
+        weight = effective_weights[category]
         result = results.get(category, {"score": 0.0, "signals": []})
         raw = result.get("score", 0.0)
 
@@ -207,7 +243,7 @@ def compute_score(results, blacklisted=False, blacklist_match=None, trust=None,
                 "weight": 0,
                 "raw_score": 0,
                 "contribution": h_penalty,
-                "max_possible": 15,
+                "max_possible": 0,
                 "signals": h_signals,
                 "info": h_info,
             })

@@ -124,7 +124,7 @@ and a full breakdown of every signal that contributed to the score.</p>
 
   <li><strong>Content Analysis (25 pts)</strong> — The highest-weighted category because it has the deepest analysis. Pattern matching against seven categorized attack types (credential harvesting, financial scam, delivery scam, urgency/pressure, CEO fraud/BEC, generic greetings, tech support scam). Also detects sensitive info requests, threatening language, and excessive urgency markers. Phrase databases informed by CCCS ITSAP.00.100 guidelines and real phishing patterns.</li>
 
-  <li><strong>Link Analysis (25 pts)</strong> — Anchor/href mismatches, URL shorteners, raw IPs, suspicious TLDs, credential harvesting URL paths, lookalike domains in links, Google Safe Browsing API reputation check.</li>
+  <li><strong>Link Analysis (25 pts)</strong> — Extracts URLs from both HTML anchor tags and plain-text body (regex), catching links Gmail didn't auto-link. Checks for anchor/href mismatches, URL shorteners, raw IPs, suspicious TLDs, credential harvesting URL paths, lookalike domains, and Google Safe Browsing API reputation.</li>
 
   <li><strong>Attachment Analysis (20 pts)</strong> — Dangerous extensions (22 types), macro-enabled documents, double extension tricks, archive files, MIME type mismatches, SHA-256 hash computation, and <strong>VirusTotal hash reputation check</strong> against 70+ antivirus engines. VirusTotal catches known malware that metadata analysis alone would miss. Files not in VirusTotal's database (never uploaded by anyone) are silently skipped — "unknown" is not treated as safe or dangerous.</li>
 </ol>
@@ -134,7 +134,7 @@ and a full breakdown of every signal that contributed to the score.</p>
 <p>Weighted linear sum — each analyzer score is multiplied by its weight, totaling 100. Weights reflect how deeply we actually analyze each category and whether external APIs provide real enrichment.</p>
 
 <table>
-  <tr><th>Category</th><th>Weight</th><th>Analysis Depth</th></tr>
+  <tr><th>Category</th><th>Weight (base)</th><th>Analysis Depth</th></tr>
   <tr><td>Content</td><td>25</td><td>Deepest — 7 attack categories, regex, multi-category detection</td></tr>
   <tr><td>Links</td><td>25</td><td>Strong — pattern analysis + Google Safe Browsing API</td></tr>
   <tr><td>Attachments</td><td>20</td><td>Solid — metadata analysis + VirusTotal hash reputation</td></tr>
@@ -143,13 +143,15 @@ and a full breakdown of every signal that contributed to the score.</p>
 </table>
 
 <ul>
-  <li><strong>External API threat override (+60 pts):</strong> If Google Safe Browsing flags a URL or VirusTotal flags an attachment as malicious, a flat +60 points is added on top of the normal score. These are high-confidence external signals — if a threat intelligence API says it's bad, we escalate immediately to at least Suspicious. This overrides the normal weighted calculation.</li>
+  <li><strong>Dynamic weight redistribution:</strong> If a category has no data to analyze (e.g., email has no links or no attachments), its weight drops to 0 and the freed points are redistributed to active categories — 60% goes to content, the rest is split among the other active categories. This means a text-only phishing email gets scored fairly on its content rather than being diluted by empty categories.</li>
+  <li><strong>Aggressive content scoring:</strong> Each detected attack pattern contributes 0.25 base + 0.20 per additional match (capped at 0.80 per category). This ensures that even 2-3 phishing phrases naturally push the score past the Suspicious threshold — no artificial overrides needed. The score always reflects the real math.</li>
+  <li><strong>External API threat override (+60 pts):</strong> If Google Safe Browsing flags a URL or VirusTotal flags an attachment as malicious, a flat +60 points is added on top of the normal score. These are high-confidence external signals — if a threat intelligence API says it's bad, we escalate immediately. This overrides the normal weighted calculation.</li>
   <li><strong>Trust-aware dampening:</strong> Verified senders (SPF/DKIM pass + known domain) get reduced sender/header scores. Content, links, and attachments are <em>never</em> dampened — a compromised legitimate account can still send phishing.</li>
   <li><strong>History-based signals:</strong> The system queries past scans from the same sender domain. Domains flagged 2+ times get a repeat offender penalty (+8 to +15 pts). If a normally-safe sender's score deviates 20+ points from their baseline, it flags possible account compromise.</li>
   <li><strong>Blacklist penalty:</strong> +50 points flat for blacklisted senders/domains.</li>
 </ul>
 
-<p>Verdict mapping: 0–30 = Safe, 31–60 = Suspicious, 61–100 = Malicious.</p>
+<p>Verdict mapping: 0–20 = Safe, 21–50 = Suspicious, 51–100 = Malicious.</p>
 
 <h3>User-Managed Blacklist</h3>
 
@@ -163,7 +165,7 @@ and a full breakdown of every signal that contributed to the score.</p>
 
 <ul>
   <li><strong>Screen 1 (Verdict):</strong> Large icon + color-coded verdict + score. Immediate answer: is this safe?</li>
-  <li><strong>Screen 2 (Analysis):</strong> Full per-category breakdown with severity icons, signal descriptions, trust info, history context, and blacklist management actions.</li>
+  <li><strong>Screen 2 (Analysis):</strong> Clean 5-category breakdown (Sender, Authentication, Content, Links, Attachments). Bonus signals like trust, history, threat intel, and blacklist are merged into their parent category so the view stays focused. Each category shows severity-coded signals with full descriptions.</li>
 </ul>
 
 <hr>

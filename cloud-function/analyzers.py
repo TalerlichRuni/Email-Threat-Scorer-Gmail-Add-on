@@ -476,7 +476,9 @@ def analyze_content(data):
                     "severity": "low"
                 })
             else:
-                cat_score = min(len(found) * 0.12, 0.4)
+                # First match = 0.25 base, each additional +0.20, cap at 0.8
+                # This ensures even 2-3 matches produce a meaningful score
+                cat_score = min(0.25 + (len(found) - 1) * 0.20, 0.8)
                 score += cat_score
                 signals.append({
                     "description": "{}: {}".format(category_name, preview),

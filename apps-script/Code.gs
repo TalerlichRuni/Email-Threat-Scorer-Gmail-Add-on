@@ -109,7 +109,7 @@ function extractEmailData(msg, messageId, accessToken) {
     authResults: extractHeaderValue(headers, "Authentication-Results"),
     plainBody: plainBody,
     bodyLength: plainBody.length,
-    links: extractLinks(htmlBody),
+    links: extractLinks(htmlBody, plainBody),
     attachments: extractAttachmentInfo(msg)
   };
 }
@@ -184,18 +184,37 @@ function extractHeaderValue(headers, name) {
   return "";
 }
 
-// Extract all <a href="...">text</a> links from HTML body
-function extractLinks(html) {
+// Extract links from both HTML <a> tags and plain-text URLs.
+// HTML tags give us anchor text vs href (for mismatch detection).
+// Plain-text regex catches URLs that Gmail didn't auto-link.
+function extractLinks(html, plainBody) {
   var links = [];
-  var regex = /<a\s[^>]*href\s*=\s*["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;
+  var seenHrefs = {};
+
+  // Pass 1: HTML <a href="..."> tags
+  var htmlRegex = /<a\s[^>]*href\s*=\s*["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;
   var match;
-  while ((match = regex.exec(html)) !== null) {
+  while ((match = htmlRegex.exec(html)) !== null) {
     var href = match[1].trim();
     var text = match[2].replace(/<[^>]+>/g, "").trim();
     if (href && !href.toLowerCase().startsWith("mailto:")) {
       links.push({ href: href, text: text });
+      seenHrefs[href.toLowerCase()] = true;
     }
   }
+
+  // Pass 2: plain-text URLs not already found in HTML
+  if (plainBody) {
+    var urlRegex = /https?:\/\/[^\s<>"')\]]+/gi;
+    while ((match = urlRegex.exec(plainBody)) !== null) {
+      var url = match[0].replace(/[.,;:!?)]+$/, ""); // trim trailing punctuation
+      if (!seenHrefs[url.toLowerCase()]) {
+        links.push({ href: url, text: url });
+        seenHrefs[url.toLowerCase()] = true;
+      }
+    }
+  }
+
   return links;
 }
 
@@ -363,7 +382,7 @@ function buildVerdictCard(emailData, result) {
 
   var verdictSection = CardService.newCardSection();
 
-  if (score <= 30) {
+  if (score <= 20) {
     verdictSection.addWidget(CardService.newImage().setImageUrl("https://img.icons8.com/color/240/verified-account.png"));
     verdictSection.addWidget(CardService.newTextParagraph().setText(
       "<b><font color='#1b5e20'>SAFE</font></b><br><font color='#2e7d32'>Risk Score: " + score + " / 100</font>"
@@ -371,7 +390,7 @@ function buildVerdictCard(emailData, result) {
     verdictSection.addWidget(CardService.newTextParagraph().setText(
       "<font color='#2e7d32'>This email passed security analysis.<br>No significant threats detected.</font>"
     ));
-  } else if (score <= 60) {
+  } else if (score <= 50) {
     verdictSection.addWidget(CardService.newImage().setImageUrl("https://img.icons8.com/color/240/error--v1.png"));
     verdictSection.addWidget(CardService.newTextParagraph().setText(
       "<b><font color='#e65100'>SUSPICIOUS</font></b><br><font color='#ef6c00'>Risk Score: " + score + " / 100</font>"
@@ -448,43 +467,83 @@ function buildAnalysisCard(emailData, result) {
       .setImageStyle(CardService.ImageStyle.CIRCLE)
   );
 
-  // Sort: categories with issues first, clean ones last
-  var categoriesWithIssues = [];
-  var categoriesClean = [];
+  // Merge bonus categories into the 5 main ones so the UI stays clean:
+  // trust/history/blacklist → sender, threat_intel → links or attachments
+  var MAIN_CATEGORIES = ["sender", "headers", "content", "links", "attachments"];
+  var merged = {};
+  for (var i = 0; i < MAIN_CATEGORIES.length; i++) {
+    merged[MAIN_CATEGORIES[i]] = { signals: [], info: [], contribution: 0, max_possible: 0, raw_score: 0, weight: 0 };
+  }
+
   for (var i = 0; i < breakdown.length; i++) {
-    if ((breakdown[i].signals || []).length > 0) {
-      categoriesWithIssues.push(breakdown[i]);
+    var cat = breakdown[i];
+    var name = cat.category;
+    var target;
+
+    if (name === "trust" || name === "history" || name === "blacklist") {
+      target = "sender";
+    } else if (name === "threat_intel") {
+      // Route to links or attachments based on what triggered it
+      var threatDesc = ((cat.info || [])[0] || {}).description || "";
+      target = threatDesc.toLowerCase().indexOf("virustotal") !== -1 ? "attachments" : "links";
     } else {
-      categoriesClean.push(breakdown[i]);
+      target = name;
+    }
+
+    if (!merged[target]) continue;
+
+    // For main categories, set the base score info
+    if (name === target) {
+      merged[target].contribution = cat.contribution || 0;
+      merged[target].max_possible = cat.max_possible || 0;
+      merged[target].weight = cat.weight || 0;
+    } else {
+      // Bonus category — add contribution but don't change max_possible
+      merged[target].contribution += (cat.contribution || 0);
+    }
+
+    var sigs = cat.signals || [];
+    for (var j = 0; j < sigs.length; j++) merged[target].signals.push(sigs[j]);
+    var infos = cat.info || [];
+    for (var j = 0; j < infos.length; j++) merged[target].info.push(infos[j]);
+  }
+
+  // Render the 5 categories, issues first
+  var withIssues = [];
+  var clean = [];
+  for (var i = 0; i < MAIN_CATEGORIES.length; i++) {
+    var name = MAIN_CATEGORIES[i];
+    if (merged[name].signals.length > 0) {
+      withIssues.push(name);
+    } else {
+      clean.push(name);
     }
   }
 
-  var allCategories = categoriesWithIssues.concat(categoriesClean);
-  for (var i = 0; i < allCategories.length; i++) {
-    var cat = allCategories[i];
-    var catLabel = categoryLabel(cat.category);
-    var catIcon = categoryIcon(cat.category);
-
+  var renderOrder = withIssues.concat(clean);
+  for (var i = 0; i < renderOrder.length; i++) {
+    var name = renderOrder[i];
+    var cat = merged[name];
+    var catIcon = categoryIcon(name);
+    var catLabel = categoryLabel(name);
     var scoreTag = cat.max_possible > 0
       ? "  —  " + cat.contribution + "/" + cat.max_possible + " pts"
       : "";
     var catSection = CardService.newCardSection().setHeader(catIcon + " " + catLabel + scoreTag);
 
-    var signals = cat.signals || [];
-    if (signals.length === 0) {
+    if (cat.signals.length === 0) {
       catSection.addWidget(CardService.newTextParagraph().setText("<font color='#2e7d32'>✓ No issues detected</font>"));
     } else {
-      for (var j = 0; j < signals.length; j++) {
+      for (var j = 0; j < cat.signals.length; j++) {
         catSection.addWidget(CardService.newTextParagraph().setText(
-          severityIcon(signals[j].severity) + " " + signals[j].description
+          severityIcon(cat.signals[j].severity) + " " + cat.signals[j].description
         ));
       }
     }
 
-    var info = cat.info || [];
-    for (var k = 0; k < info.length; k++) {
+    for (var k = 0; k < cat.info.length; k++) {
       catSection.addWidget(CardService.newTextParagraph().setText(
-        "<font color='#9e9e9e'>ℹ️ " + info[k].description + "</font>"
+        "<font color='#9e9e9e'>ℹ️ " + cat.info[k].description + "</font>"
       ));
     }
 
