@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Email Threat Scorer — README</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+      max-width: 900px;
+      margin: 40px auto;
+      padding: 0 20px;
+      color: #24292f;
+      line-height: 1.6;
+      background: #fff;
+    }
+    h1 { font-size: 2em; border-bottom: 2px solid #d0d7de; padding-bottom: 10px; }
+    h2 { font-size: 1.5em; border-bottom: 1px solid #d0d7de; padding-bottom: 8px; margin-top: 40px; }
+    h3 { font-size: 1.2em; margin-top: 28px; }
+    hr { border: none; border-top: 1px solid #d0d7de; margin: 30px 0; }
+    code {
+      background: #f6f8fa;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 0.9em;
+      font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+    }
+    pre {
+      background: #f6f8fa;
+      padding: 16px;
+      border-radius: 8px;
+      overflow-x: auto;
+      font-size: 0.85em;
+      line-height: 1.5;
+      border: 1px solid #d0d7de;
+    }
+    pre code { background: none; padding: 0; }
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      margin: 16px 0;
+    }
+    th, td {
+      border: 1px solid #d0d7de;
+      padding: 8px 12px;
+      text-align: left;
+    }
+    th { background: #f6f8fa; font-weight: 600; }
+    strong { font-weight: 600; }
+    ul, ol { padding-left: 24px; }
+    li { margin-bottom: 6px; }
+    p { margin: 12px 0; }
+  </style>
+</head>
+<body>
+
+<div style="display: flex; justify-content: space-between; align-items: flex-start;">
+  <div>
+    <h1 style="margin-bottom: 4px;">Email Threat Scorer — Gmail Add-on</h1>
+    <p style="font-size: 1.1em; color: #57606a; margin-top: 0;">Tal Erlich — Upwind Security</p>
+  </div>
+  <img src="upwind-logo.png" alt="Upwind Security" style="height: 60px; margin-top: 10px;">
+</div>
+
+<p>A Gmail Add-on that analyzes emails for phishing and social engineering threats.
+When you open any email, it runs five analysis modules on the content, metadata, and links,
+then shows a risk score (0–100) with a clear verdict — <strong>Safe</strong>, <strong>Suspicious</strong>, or <strong>Malicious</strong> —
+and a full breakdown of every signal that contributed to the score.</p>
+
+<hr>
+
+<h2>Architecture</h2>
+
+<p>The system is split into a <strong>frontend</strong> (Google Apps Script) and a <strong>backend</strong> (Google Cloud Function, Python).</p>
+
+<pre><code>┌──────────────────┐       HTTPS + API Key       ┌──────────────────────┐
+│   Gmail Add-on   │ ──────────────────────────►  │   Cloud Function     │
+│   (Apps Script)  │                              │   (Python)           │
+│                  │  ◄──────────────────────────  │                      │
+│  - Extract data  │    JSON: score + breakdown   │  - 5 analyzers       │
+│  - Blacklist     │                              │  - Trust assessment  │
+│  - History query │                              │  - Scoring engine    │
+│  - Render UI     │                              │  - Safe Browsing API │
+└──────────────────┘                              │  - VirusTotal API    │
+        │                                         └──────────────────────┘
+        ▼
+  Google Sheet (scan history)</code></pre>
+
+<p><strong>Frontend (Apps Script)</strong> — Runs inside Gmail. Extracts email data (sender, headers, body, links, attachments), checks the user's blacklist, queries past scan history from a Google Sheet, sends everything to the backend, and renders the result as a two-card UI in the sidebar.</p>
+
+<p><strong>Backend (Cloud Function, Python)</strong> — Receives the extracted data, runs five independent analyzers, assesses sender trust, computes a weighted risk score, and returns a JSON response with the score, verdict, and per-signal breakdown.</p>
+
+<p><strong>Why separate?</strong> Python is better for text analysis and pattern matching. API keys (Safe Browsing, VirusTotal) stay server-side. The scoring logic can be updated or tested independently without touching the add-on.</p>
+
+<p><strong>Authentication:</strong> Shared API key in the <code>X-API-Key</code> header. Not production-grade — a deliberate simplification. In production, this would be IAM or OAuth.</p>
+
+<hr>
+
+<h2>APIs Used</h2>
+
+<table>
+  <tr><th>API / Service</th><th>Purpose</th></tr>
+  <tr><td><strong>Gmail API</strong> (<code>GmailApp</code>, raw content parsing)</td><td>Extract email data, headers, authentication results, attachments</td></tr>
+  <tr><td><strong>Google Safe Browsing API v4</strong></td><td>Check URLs against Google's malware and phishing threat lists</td></tr>
+  <tr><td><strong>VirusTotal API v3</strong></td><td>Check attachment SHA-256 hashes against 70+ antivirus engines</td></tr>
+  <tr><td><strong>Google Sheets API</strong> (<code>SpreadsheetApp</code>)</td><td>Store scan history, query it for repeat offender detection</td></tr>
+  <tr><td><strong>Google Cloud Functions</strong></td><td>Host the Python analysis backend</td></tr>
+  <tr><td><strong>PropertiesService</strong> (User / Script)</td><td>Store per-user blacklist and backend configuration</td></tr>
+  <tr><td><strong>CacheService</strong></td><td>Cache scan results for card-to-card navigation</td></tr>
+</table>
+
+<hr>
+
+<h2>Implemented Features</h2>
+
+<h3>Five Analysis Modules</h3>
+
+<p>Each analyzer returns a normalized score (0.0–1.0) and a list of signals with severity levels.</p>
+
+<ol>
+  <li><strong>Sender Analysis (15 pts)</strong> — Reply-To mismatches, brand impersonation from free email providers, lookalike domain detection (Levenshtein distance + character substitution maps), display name tricks.</li>
+
+  <li><strong>Header Authentication (15 pts)</strong> — SPF, DKIM, DMARC verification. Parsed from <code>GmailApp.getRawContent()</code> because the Gmail REST API doesn't reliably return auth headers through contextual trigger tokens.</li>
+
+  <li><strong>Content Analysis (25 pts)</strong> — The highest-weighted category because it has the deepest analysis. Pattern matching against seven categorized attack types (credential harvesting, financial scam, delivery scam, urgency/pressure, CEO fraud/BEC, generic greetings, tech support scam). Also detects sensitive info requests, threatening language, and excessive urgency markers. Phrase databases informed by CCCS ITSAP.00.100 guidelines and real phishing patterns.</li>
+
+  <li><strong>Link Analysis (25 pts)</strong> — Anchor/href mismatches, URL shorteners, raw IPs, suspicious TLDs, credential harvesting URL paths, lookalike domains in links, Google Safe Browsing API reputation check.</li>
+
+  <li><strong>Attachment Analysis (20 pts)</strong> — Dangerous extensions (22 types), macro-enabled documents, double extension tricks, archive files, MIME type mismatches, SHA-256 hash computation, and <strong>VirusTotal hash reputation check</strong> against 70+ antivirus engines. VirusTotal catches known malware that metadata analysis alone would miss. Files not in VirusTotal's database (never uploaded by anyone) are silently skipped — "unknown" is not treated as safe or dangerous.</li>
+</ol>
+
+<h3>Scoring Engine</h3>
+
+<p>Weighted linear sum — each analyzer score is multiplied by its weight, totaling 100. Weights reflect how deeply we actually analyze each category and whether external APIs provide real enrichment.</p>
+
+<table>
+  <tr><th>Category</th><th>Weight</th><th>Analysis Depth</th></tr>
+  <tr><td>Content</td><td>25</td><td>Deepest — 7 attack categories, regex, multi-category detection</td></tr>
+  <tr><td>Links</td><td>25</td><td>Strong — pattern analysis + Google Safe Browsing API</td></tr>
+  <tr><td>Attachments</td><td>20</td><td>Solid — metadata analysis + VirusTotal hash reputation</td></tr>
+  <tr><td>Sender</td><td>15</td><td>Good — lookalike detection, impersonation, reply-to mismatch</td></tr>
+  <tr><td>Headers</td><td>15</td><td>Good — real SPF/DKIM/DMARC verification</td></tr>
+</table>
+
+<ul>
+  <li><strong>External API threat override (+60 pts):</strong> If Google Safe Browsing flags a URL or VirusTotal flags an attachment as malicious, a flat +60 points is added on top of the normal score. These are high-confidence external signals — if a threat intelligence API says it's bad, we escalate immediately to at least Suspicious. This overrides the normal weighted calculation.</li>
+  <li><strong>Trust-aware dampening:</strong> Verified senders (SPF/DKIM pass + known domain) get reduced sender/header scores. Content, links, and attachments are <em>never</em> dampened — a compromised legitimate account can still send phishing.</li>
+  <li><strong>History-based signals:</strong> The system queries past scans from the same sender domain. Domains flagged 2+ times get a repeat offender penalty (+8 to +15 pts). If a normally-safe sender's score deviates 20+ points from their baseline, it flags possible account compromise.</li>
+  <li><strong>Blacklist penalty:</strong> +50 points flat for blacklisted senders/domains.</li>
+</ul>
+
+<p>Verdict mapping: 0–30 = Safe, 31–60 = Suspicious, 61–100 = Malicious.</p>
+
+<h3>User-Managed Blacklist</h3>
+
+<p>Users can block specific email addresses or entire domains directly from the add-on UI. Entries are stored per-user in <code>PropertiesService</code>. Blacklisted senders get a +50 point penalty that overrides trust.</p>
+
+<h3>Scan History</h3>
+
+<p>Every scan is logged to a Google Sheet (one row per unique email, deduplicated by message ID). Columns: timestamp, sender, subject, score, verdict (color-coded), key signals, link/attachment counts. The history feeds the repeat offender and baseline deviation scoring signals.</p>
+
+<h3>Two-Screen UI</h3>
+
+<ul>
+  <li><strong>Screen 1 (Verdict):</strong> Large icon + color-coded verdict + score. Immediate answer: is this safe?</li>
+  <li><strong>Screen 2 (Analysis):</strong> Full per-category breakdown with severity icons, signal descriptions, trust info, history context, and blacklist management actions.</li>
+</ul>
+
+<hr>
+
+<h2>Limitations</h2>
+
+<ul>
+  <li><strong>No attachment content scanning.</strong> VirusTotal checks file hashes against known threats, but we don't open or execute files — that would require a sandbox. Brand new malware not yet in VirusTotal's database won't be detected by hash alone.</li>
+  <li><strong>VirusTotal rate limits.</strong> Free tier allows 4 requests/minute and 500/day. Sufficient for an MVP but not for production scale.</li>
+  <li><strong>Can't scan spam.</strong> Gmail blocks add-ons from accessing the Spam folder.</li>
+  <li><strong>Static pattern databases.</strong> Phrase lists and domain lists are hardcoded. A production system would use live threat intelligence feeds.</li>
+  <li><strong>No image/QR code analysis.</strong> Can't detect quishing (phishing via QR codes in images).</li>
+  <li><strong>English only.</strong> Phrase matching is English-only. Non-English phishing won't trigger content signals.</li>
+  <li><strong>History doesn't scale infinitely.</strong> The Google Sheet approach works for hundreds of scans. At thousands of rows, the linear scan would slow down.</li>
+  <li><strong>Hardcoded trusted domains.</strong> The ~30 trusted domains are static. A production system would learn trust dynamically.</li>
+  <li><strong>Not production-ready.</strong> No rate limiting, no monitoring, no automated tests, no CI/CD. Auth is a shared secret, not IAM/OAuth.</li>
+</ul>
+
+</body>
+</html>
