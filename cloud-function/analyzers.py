@@ -7,10 +7,8 @@ Each analyzer receives the raw email data dict and returns:
     "signals": [{"description": str, "severity": "info|low|medium|high|critical"}]
   }
 
-Pattern databases are informed by real-world phishing campaigns and threat
-intelligence from sources including the Canadian Centre for Cyber Security
-(ITSAP.00.100), APWG phishing reports, and common enterprise email
-threat patterns.
+Pattern databases are built from real-world phishing campaigns,
+documented attack patterns, and common enterprise email threats.
 
 Design note: heuristic-based pattern detectors, not ML.
 Full explainability — every signal traces to a concrete rule.

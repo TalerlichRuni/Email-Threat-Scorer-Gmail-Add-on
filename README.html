@@ -122,7 +122,7 @@ and a full breakdown of every signal that contributed to the score.</p>
 
   <li><strong>Header Authentication (15 pts)</strong> — SPF, DKIM, DMARC verification. Parsed from <code>GmailApp.getRawContent()</code> because the Gmail REST API doesn't reliably return auth headers through contextual trigger tokens.</li>
 
-  <li><strong>Content Analysis (25 pts)</strong> — The highest-weighted category because it has the deepest analysis. Pattern matching against seven categorized attack types (credential harvesting, financial scam, delivery scam, urgency/pressure, CEO fraud/BEC, generic greetings, tech support scam). Also detects sensitive info requests, threatening language, and excessive urgency markers. Phrase databases informed by CCCS ITSAP.00.100 guidelines and real phishing patterns.</li>
+  <li><strong>Content Analysis (25 pts)</strong> — The highest-weighted category because it has the deepest analysis. Pattern matching against seven categorized attack types (credential harvesting, financial scam, delivery scam, urgency/pressure, CEO fraud/BEC, generic greetings, tech support scam). Also detects sensitive info requests, threatening language, and excessive urgency markers. Phrase databases built from real-world phishing campaigns and documented attack patterns.</li>
 
   <li><strong>Link Analysis (25 pts)</strong> — Extracts URLs from both HTML anchor tags and plain-text body (regex), catching links Gmail didn't auto-link. Checks for anchor/href mismatches, URL shorteners, raw IPs, suspicious TLDs, credential harvesting URL paths, lookalike domains, and Google Safe Browsing API reputation.</li>
 
@@ -173,15 +173,11 @@ and a full breakdown of every signal that contributed to the score.</p>
 <h2>Limitations</h2>
 
 <ul>
-  <li><strong>No attachment content scanning.</strong> VirusTotal checks file hashes against known threats, but we don't open or execute files — that would require a sandbox. Brand new malware not yet in VirusTotal's database won't be detected by hash alone.</li>
-  <li><strong>VirusTotal rate limits.</strong> Free tier allows 4 requests/minute and 500/day. Sufficient for an MVP but not for production scale.</li>
-  <li><strong>Can't scan spam.</strong> Gmail blocks add-ons from accessing the Spam folder.</li>
+  <li><strong>No attachment content scanning.</strong> We analyze metadata and check hashes against VirusTotal, but we don't open or execute files. Brand new malware not yet in any database won't be caught.</li>
+  <li><strong>No image or QR code analysis.</strong> Can't detect phishing hidden in images or QR codes (quishing).</li>
+  <li><strong>Gmail's built-in filtering.</strong> Gmail blocks known malware and spam before it reaches the inbox, which makes it harder to test and train the add-on on real threats.</li>
+  <li><strong>English only.</strong> Pattern matching currently works only in English. Non-English phishing won't trigger content signals.</li>
   <li><strong>Static pattern databases.</strong> Phrase lists and domain lists are hardcoded. A production system would use live threat intelligence feeds.</li>
-  <li><strong>No image/QR code analysis.</strong> Can't detect quishing (phishing via QR codes in images).</li>
-  <li><strong>English only.</strong> Phrase matching is English-only. Non-English phishing won't trigger content signals.</li>
-  <li><strong>History doesn't scale infinitely.</strong> The Google Sheet approach works for hundreds of scans. At thousands of rows, the linear scan would slow down.</li>
-  <li><strong>Hardcoded trusted domains.</strong> The ~30 trusted domains are static. A production system would learn trust dynamically.</li>
-  <li><strong>Not production-ready.</strong> No rate limiting, no monitoring, no automated tests, no CI/CD. Auth is a shared secret, not IAM/OAuth.</li>
 </ul>
 
 <hr>
