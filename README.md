@@ -111,3 +111,11 @@ Every scan is logged to a Google Sheet (one row per unique email, deduplicated b
 - **History doesn't scale infinitely.** The Google Sheet approach works for hundreds of scans. At thousands of rows, the linear scan would slow down.
 - **Hardcoded trusted domains.** The ~30 trusted domains are static. A production system would learn trust dynamically.
 - **Not production-ready.** No rate limiting, no monitoring, no automated tests, no CI/CD. Auth is a shared secret, not IAM/OAuth.
+
+---
+
+## Future Ideas
+
+- **ML model alongside heuristics** — Train a classifier on scan history data to catch patterns that static rules miss. Keep heuristics for explainability, add ML for a confidence score.
+- **Shared database and cross-user learning** — Replace Google Sheets with a real database. Aggregate scan data across users so a domain flagged by many users becomes a signal for everyone.
+- **"Mark as Safe" feedback loop** — Let users correct false positives. The system learns from this feedback and adjusts scoring over time, making it self-correcting.
